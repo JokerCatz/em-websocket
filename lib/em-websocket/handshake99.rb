@@ -1,7 +1,5 @@
 #encoding:utf-8
 require "http/parser"
-require 'rack/utils'
-require 'base64'
 
 module EventMachine
   module WebSocket
