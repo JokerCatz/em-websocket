@@ -1,5 +1,7 @@
 # EM-WebSocket
 
+JokerCatz add LongPolling support , please just play example : chat
+
 [![Gem Version](https://badge.fury.io/rb/em-websocket.png)](http://rubygems.org/gems/em-websocket)
 [![Analytics](https://ga-beacon.appspot.com/UA-71196-10/em-websocket/readme)](https://github.com/igrigorik/ga-beacon)
 

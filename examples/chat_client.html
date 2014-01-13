@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Chat Room</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.0/jquery.min.js"></script>
+    <script>
+//WebSocket = null; //unmark this to long polling test
+
+//must use to fix ie8 CSRF bug
+jQuery.support.cors = true;
+
+var websocket = null;
+var url_cache = null;
+var base_url = "127.0.0.1:3456"; //only host&port
+
+var serialize_url = function(from_ws){
+  return url_cache || (url_cache = (from_ws ? 'ws://' : 'http://') + base_url);
+};
+
+var Comet = function(){
+  var error_count = 0;
+  var max_error = 3;
+  var max_msg = 20;
+  
+  var container = null;
+  
+  var show_error = function(){
+    onmessage('...disconnection...');
+  };
+  var onmessage = function(msg){
+    error_count = 0;
+    
+    container.append('<li>' + msg + '</li>');
+    var temp = container.find('li');
+    if(temp.length > max_msg){
+      temp.first().remove();
+    }
+  };
+  var long_polling = function(){
+    $.ajax({
+      url:serialize_url(false),dataType:'json',crossDomain:true,async:true,
+      success:function(json){
+        onmessage(json.msg);
+        long_polling();
+      },
+      error:function(x,t,m){
+        (error_count += 1) < max_error ? long_polling() : show_error();
+      }
+    });
+  };
+  var kwebsocket = function(){
+
+    websocket = new WebSocket(serialize_url(true));
+    //一律使用addEventListener來支援websocket-js
+    websocket.onopen = function(){
+      onmessage('...login(WebSocket)');
+    };
+    websocket.onmessage = function(msg){
+      var json = $.parseJSON(msg.data);
+      onmessage(json.msg);
+    };
+    websocket.onclose = function(){
+      onmessage('...logout(WebSocket)');
+    };
+    websocket.onerror = function(){
+      (error_count += 1) < max_error ? kwebsocket() : show_error();
+    };
+  };
+  var init = function(){
+    container = $('#msg_box');
+    try{
+      if(!!WebSocket){
+        kwebsocket();
+      }else{
+        onmessage('...login(LongPolling)');
+        long_polling();
+      }
+    }catch(e){
+      long_polling();
+    };
+  };
+  return init;
+};
+
+jQuery(function($){
+  Comet()();
+  
+  $('form').submit(function(){
+    var source = $(this).find('#msg_field');
+    var msg = source.val();
+    if(websocket){
+      websocket.send(msg);
+    }else{
+      $.post(serialize_url(false) , {msg:msg} , function(ans){
+        //...
+      });
+    }
+    source.val('');
+    return false;
+  });
+});
+///bid test
+    </script>
+    <style>
+      body{
+        background:#ddddff;
+      }
+      form{
+        padding:0;
+        margin:0;
+        text-align:center;
+      }
+      ul,li{
+        margin:0;
+        padding:0;
+        list-style-type:none;
+      }
+      #msg_box{
+        padding:0;
+        margin:50px auto 10px auto;
+        width:400px;
+        height:300px;
+        background:#eeeeff;
+      }
+    </style>
+  </head>
+  <body>
+    <ul id='msg_box'></ul>
+    <form action='#' id='form'>
+      <input type='text' id='msg_field'><input type='submit' value='submit'>
+    </form>
+  </body>
+</html>

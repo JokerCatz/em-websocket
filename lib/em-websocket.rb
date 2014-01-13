@@ -5,7 +5,7 @@ require "eventmachine"
 %w[
   debugger websocket connection
   handshake
-  handshake75 handshake76 handshake04
+  handshake75 handshake76 handshake04 handshake99
   framing76 framing03 framing04 framing05 framing07
   close75 close03 close05 close06
   masking04

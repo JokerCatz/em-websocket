@@ -3,6 +3,11 @@ require "http/parser"
 module EventMachine
   module WebSocket
 
+    #mask to support body query
+    class Http::Parser
+      attr_reader :body
+    end
+    
     # Resposible for creating the server handshake response
     class Handshake
       include EM::Deferrable
@@ -91,17 +96,13 @@ module EventMachine
           raise HandshakeError, "Invalid request URI: #{@parser.request_url}"
         end
 
-        # Validate Upgrade
-        unless @parser.upgrade?
-          raise HandshakeError, "Not an upgrade request"
-        end
-        upgrade = @headers['upgrade']
-        unless upgrade.kind_of?(String) && upgrade.downcase == 'websocket'
-          raise HandshakeError, "Invalid upgrade header: #{upgrade.inspect}"
-        end
+        version = nil
+        
+        #http long_polling
+        version = 99 unless @parser.upgrade? && @headers['upgrade'].kind_of?(String) && @headers['upgrade'].downcase == 'websocket'
 
         # Determine version heuristically
-        version = if @headers['sec-websocket-version']
+        version ||= if @headers['sec-websocket-version']
           # Used from drafts 04 onwards
           @headers['sec-websocket-version'].to_i
         elsif @headers['sec-websocket-draft']
@@ -136,6 +137,8 @@ module EventMachine
           Handshake76
         when 5, 6, 7, 8, 13
           Handshake04
+        when 99
+          Handshake99
         else
           # According to spec should abort the connection
           raise HandshakeError, "Protocol version #{version} not supported"
@@ -143,10 +146,13 @@ module EventMachine
 
         upgrade_response = handshake_klass.handshake(@headers, @parser.request_url, @secure)
 
-        handler_klass = Handler.klass_factory(version)
-
         @protocol_version = version
-        succeed(upgrade_response, handler_klass)
+        
+        if version != 99
+          succeed(upgrade_response, Handler.klass_factory(version))
+        else
+          succeed(upgrade_response)
+        end        
       rescue HandshakeError => e
         fail(e)
       end

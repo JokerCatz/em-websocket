@@ -1,9 +1,12 @@
+require 'zlib'
+
 module EventMachine
   module WebSocket
     class Connection < EventMachine::Connection
       include Debugger
 
       attr_writer :max_frame_size
+      attr_accessor :long_polling
 
       # define WebSocket callbacks
       def onopen(&blk);     @onopen = blk;    end
@@ -50,11 +53,15 @@ module EventMachine
       # This sends a close frame and waits for acknowlegement before closing
       # the connection
       def close(code = nil, body = nil)
-        if code && !acceptable_close_code?(code)
-          raise "Application code may only use codes from 1000, 3000-4999"
-        end
+        unless @long_polling
+          if code && !acceptable_close_code?(code)
+            raise "Application code may only use codes from 1000, 3000-4999"
+          end
 
-        close_websocket_private(code, body)
+          close_websocket_private(code, body)
+        else
+          close_connection_after_writing
+        end
       end
 
       # Deprecated, to be removed in version 0.6
@@ -68,7 +75,7 @@ module EventMachine
         debug [:receive_data, data]
 
         if @handler
-          @handler.receive_data(data)
+          @long_polling ? super(data) : @handler.receive_data(data)
         else
           dispatch(data)
         end
@@ -88,9 +95,14 @@ module EventMachine
       end
 
       def unbind
-        debug [:unbind, :connection]
+        unless @long_polling
+          debug [:unbind, :connection]
 
-        @handler.unbind if @handler
+          @handler.unbind if @handler
+        else
+          trigger_on_close()
+          super
+        end
       rescue => e
         debug [:error, e]
         # These are application errors - raise unless onerror defined
@@ -105,10 +117,16 @@ module EventMachine
             handshake = Handshake.new(@secure || @secure_proxy)
 
             handshake.callback { |upgrade_response, handler_klass|
-              debug [:accepting_ws_version, handshake.protocol_version]
-              debug [:upgrade_response, upgrade_response]
-              self.send_data(upgrade_response)
-              @handler = handler_klass.new(self, @debug)
+              if handler_klass
+                debug [:accepting_ws_version, handshake.protocol_version]
+                debug [:upgrade_response, upgrade_response]
+                self.send_data(upgrade_response)
+                @handler = handler_klass.new(self, @debug)
+                @long_polling = false
+              else
+                @long_polling = @handler = true
+              end
+              
               @handshake = nil
               trigger_on_open(handshake)
             }
@@ -123,7 +141,7 @@ module EventMachine
             handshake
           end
 
-          @handshake.receive_data(data)
+          @long_polling ? super(data) : @handshake.receive_data(data)
         end
       end
 
@@ -143,6 +161,12 @@ module EventMachine
       UTF8 = Encoding.find("UTF-8") if ENCODING_SUPPORTED
       BINARY = Encoding.find("BINARY") if ENCODING_SUPPORTED
 
+      # Send Long Polling msg and close
+      def send_close(data)
+        send_text(data)
+        close_connection_after_writing
+      end
+      
       # Send a WebSocket text frame.
       #
       # A WebSocketError may be raised if the connection is in an opening or a
@@ -163,7 +187,21 @@ module EventMachine
         end
 
         if @handler
-          @handler.send_text_frame(data)
+          if @long_polling
+            data = StringIO.new.tap do |io|
+              gz = Zlib::GzipWriter.new(io)
+              begin
+                gz.write(data)
+              ensure
+                gz.close
+              end
+            end.string
+            
+            send_data "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: *\r\nX-Frame-Options: DENY\r\nCache-Control: private, no-store, no-cache, must-revalidate, post-check=0, pre-check=0\r\nPragma: no-cache\r\nConnection: keep-alive\r\nContent-Length: #{data.bytesize}\r\n\r\n#{data}"
+            close_connection_after_writing
+          else
+            @handler.send_text_frame(data)
+          end
         else
           raise WebSocketError, "Cannot send data before onopen callback"
         end
@@ -180,7 +218,11 @@ module EventMachine
       #
       def send_binary(data)
         if @handler
-          @handler.send_frame(:binary, data)
+          if @long_polling
+            super(data)
+          else
+            @handler.send_frame(:binary, data)
+          end
         else
           raise WebSocketError, "Cannot send binary before onopen callback"
         end
@@ -192,6 +234,7 @@ module EventMachine
       # is returned since ping & pong are not supported
       #
       def ping(body = '')
+        return true if @long_polling
         if @handler
           @handler.pingable? ? @handler.send_frame(:ping, body) && true : false
         else
@@ -206,6 +249,7 @@ module EventMachine
       # incoming ping messages, as the protocol demands.
       #
       def pong(body = '')
+        return true if @long_polling
         if @handler
           @handler.pingable? ? @handler.send_frame(:pong, body) && true : false
         else
@@ -216,6 +260,7 @@ module EventMachine
       # Test whether the connection is pingable (i.e. the WebSocket draft in
       # use is >= 01)
       def pingable?
+        return false if @long_polling
         if @handler
           @handler.pingable?
         else
@@ -224,6 +269,7 @@ module EventMachine
       end
 
       def supports_close_codes?
+        return false if @long_polling
         if @handler
           @handler.supports_close_codes?
         else
@@ -232,6 +278,7 @@ module EventMachine
       end
 
       def state
+        return false if @long_polling
         @handler ? @handler.state : :handshake
       end
 
@@ -256,6 +303,7 @@ module EventMachine
       end
 
       def close_websocket_private(code, body)
+        return true if @long_polling
         if @handler
           debug [:closing, code]
           @handler.close_websocket(code, body)
