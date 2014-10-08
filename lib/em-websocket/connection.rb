@@ -13,11 +13,15 @@ module EventMachine
       def onclose(&blk);    @onclose = blk;   end
       def onerror(&blk);    @onerror = blk;   end
       def onmessage(&blk);  @onmessage = blk; end
+      def onbinary(&blk);   @onbinary = blk; end
       def onping(&blk);     @onping = blk;    end
       def onpong(&blk);     @onpong = blk;    end
 
       def trigger_on_message(msg)
         @onmessage.call(msg) if defined? @onmessage
+      end
+      def trigger_on_binary(msg)
+        @onbinary.call(msg) if defined? @onbinary
       end
       def trigger_on_open(handshake)
         @onopen.call(handshake) if defined? @onopen
@@ -43,6 +47,8 @@ module EventMachine
         @secure = options[:secure] || false
         @secure_proxy = options[:secure_proxy] || false
         @tls_options = options[:tls_options] || {}
+        @close_timeout = options[:close_timeout]
+        @outbound_limit = options[:outbound_limit] || 0
 
         @handler = nil
 
@@ -79,10 +85,6 @@ module EventMachine
         else
           dispatch(data)
         end
-      rescue WSProtocolError => e
-        debug [:error, e]
-        trigger_on_error(e)
-        close_websocket_private(e.code, e.message)
       rescue => e
         debug [:error, e]
 
@@ -92,6 +94,16 @@ module EventMachine
 
         # These are application errors - raise unless onerror defined
         trigger_on_error(e) || raise(e)
+      end
+
+      def send_data(data)
+        if @outbound_limit > 0 &&
+            get_outbound_data_size + data.bytesize > @outbound_limit
+          abort(:outbound_limit_reached)
+          return 0
+        end
+
+        super(data)
       end
 
       def unbind
@@ -135,7 +147,7 @@ module EventMachine
               debug [:error, e]
               trigger_on_error(e)
               # Handshake errors require the connection to be aborted
-              abort
+              abort(:handshake_error)
             }
 
             handshake
@@ -282,6 +294,11 @@ module EventMachine
         @handler ? @handler.state : :handshake
       end
 
+      # Returns the IP address for the remote peer
+      def remote_ip
+        get_peername[2,6].unpack('nC4')[1..4].join('.')
+      end
+
       # Returns the maximum frame size which this connection is configured to
       # accept. This can be set globally or on a per connection basis, and
       # defaults to a value of 10MB if not set.
@@ -294,11 +311,16 @@ module EventMachine
         defined?(@max_frame_size) ? @max_frame_size : WebSocket.max_frame_size
       end
 
+      def close_timeout
+        @close_timeout || WebSocket.close_timeout
+      end
+
       private
 
       # As definited in draft 06 7.2.2, some failures require that the server
       # abort the websocket connection rather than close cleanly
-      def abort
+      def abort(reason)
+        debug [:abort, reason]
         close_connection
       end
 
@@ -309,7 +331,7 @@ module EventMachine
           @handler.close_websocket(code, body)
         else
           # The handshake hasn't completed - should be safe to terminate
-          abort
+          abort(:handshake_incomplete)
         end
       end
 

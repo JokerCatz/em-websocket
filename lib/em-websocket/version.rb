@@ -1,5 +1,5 @@
 module EventMachine
   module Websocket
-    VERSION = "0.5.0.LP"
+    VERSION = "0.5.1LP"
   end
 end
