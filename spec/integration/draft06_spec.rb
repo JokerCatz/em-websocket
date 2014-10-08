@@ -1,5 +1,4 @@
 require 'helper'
-require 'integration/shared_examples'
 
 describe "draft06" do
   include EM::SpecHelper
@@ -27,13 +26,8 @@ describe "draft06" do
         "Upgrade" => "websocket",
         "Connection" => "Upgrade",
         "Sec-WebSocket-Accept" => "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+        "Sec-WebSocket-Protocol" => "sample",
       }
-    }
-  end
-  
-  def start_server
-    EM::WebSocket.run(:host => "0.0.0.0", :port => 12345) { |ws|
-      yield ws if block_given?
     }
   end
 
@@ -45,6 +39,10 @@ describe "draft06" do
   end
   
   it_behaves_like "a websocket server" do
+    let(:version) { 6 }
+  end
+
+  it_behaves_like "a WebSocket server drafts 3 and above" do
     let(:version) { 6 }
   end
 

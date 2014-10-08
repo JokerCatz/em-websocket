@@ -10,7 +10,7 @@ module EventMachine
         @frame_type = nil
       end
       
-      def process_data(newdata)
+      def process_data
         error = false
 
         while !error && @data.size >= 2
@@ -87,8 +87,19 @@ module EventMachine
 
           frame_type = opcode_to_type(opcode)
 
-          if frame_type == :continuation && !@frame_type
-            raise WSProtocolError, 'Continuation frame not expected'
+          if frame_type == :continuation
+            if !@frame_type
+              raise WSProtocolError, 'Continuation frame not expected'
+            end
+          else # Not a continuation frame
+            if @frame_type && data_frame?(frame_type)
+              raise WSProtocolError, "Continuation frame expected"
+            end
+          end
+
+          # Validate that control frames are not fragmented
+          if !fin && !data_frame?(frame_type)
+            raise WSProtocolError, 'Control frames must not be fragmented'
           end
 
           if !fin
