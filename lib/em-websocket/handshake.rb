@@ -1,4 +1,5 @@
 require "http/parser"
+require 'rack/utils'
 require "uri"
 
 module EventMachine
@@ -25,6 +26,9 @@ module EventMachine
         @parser.on_headers_complete = proc { |headers|
           @headers = Hash[headers.map { |k,v| [k.downcase, v] }]
         }
+        @parser.on_body = proc{ |chunk|
+          @body = Rack::Utils.parse_nested_query(chunk)
+        }
       end
 
       def receive_data(data)
@@ -35,6 +39,14 @@ module EventMachine
         end
       rescue HTTP::Parser::Error => e
         fail(HandshakeError.new("Invalid HTTP header: #{e.message}"))
+      end
+      
+      # add for http post
+      def params
+        return query.merge(body)
+      end
+      def body
+        return @body || {}
       end
 
       # Returns the WebSocket upgrade headers as a hash.
@@ -79,9 +91,9 @@ module EventMachine
       private
 
       def process(headers, remains)
-        unless @parser.http_method == "GET"
-          raise HandshakeError, "Must be GET request"
-        end
+        #unless @parser.http_method == "GET"
+        #  raise HandshakeError, "Must be GET request"
+        #end
 
         # Validate request path
         #
